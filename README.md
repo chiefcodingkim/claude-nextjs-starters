@@ -1,36 +1,49 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Next.js 스타터킷
 
-## Getting Started
+Next.js 15, TypeScript, Tailwind CSS, shadcn/ui로 빠르게 웹 개발을 시작하기 위한 스타터킷입니다.
 
-First, run the development server:
+## 기술 스택
+
+- Next.js 15 (App Router)
+- TypeScript
+- Tailwind CSS v4
+- shadcn/ui (Base UI 기반, `base-nova` 스타일)
+- lucide-react (아이콘)
+- next-themes (다크 모드)
+
+## 시작하기
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+http://localhost:3000 에서 확인할 수 있습니다.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 스크립트
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| 명령어 | 설명 |
+| --- | --- |
+| `npm run dev` | 개발 서버 실행 |
+| `npm run build` | 프로덕션 빌드 |
+| `npm run start` | 빌드 결과 실행 |
+| `npm run lint` | ESLint 검사 |
 
-## Learn More
+## 폴더 구조
 
-To learn more about Next.js, take a look at the following resources:
+```
+app/              라우트, 레이아웃, 전역 스타일
+components/
+  layout/         헤더, 푸터
+  ui/             shadcn/ui 컴포넌트
+config/site.ts    사이트 이름, 설명, 내비게이션 설정
+lib/utils.ts      cn() 클래스 병합 유틸
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## shadcn/ui 컴포넌트 추가
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+npx shadcn@latest add dialog
+```
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+> 주의: 컴포넌트 추가 후 `import { cn } from "cn"`이 생성되면 `"@/lib/utils"`로 바꿔 주세요.
