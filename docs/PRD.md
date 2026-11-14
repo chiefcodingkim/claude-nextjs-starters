@@ -154,8 +154,11 @@ flowchart TD
 ### 6.6 캐싱/재검증 전략
 - Notion 조회 결과를 서버 캐시(`unstable_cache` 또는 `fetch` revalidate)로 **60초** 캐시, 태그: `invoice:{token}` `[가정]`.
 - 수정 반영 지연 최대 60초임을 공급자 가이드에 명시한다.
-- Notion 레이트리밋은 평균 초당 약 3요청 `[가정: 공식 문서로 재확인 필요]`. 캐시와 요청 병합으로 완화하고, `APIErrorCode.RateLimited` 발생 시 마지막 성공 캐시를 우선 제공(stale-while-error)하거나 오류 화면을 표시한다 [확인: SDK가 RateLimited 코드를 제공].
-- 견적서 1건 조회 = 견적서 DB 쿼리 1회 + 품목 DB 쿼리 1회(페이지네이션 시 추가)로 제한한다.
+- Notion 레이트리밋 [확인: Notion 공식 문서]: 연결당 평균 약 3요청/초(Business 이상 플랜은 약 10요청/초), data source 쿼리도 연결당 약 3요청/초. 초과 시 429 + `Retry-After`(최대 60초). 견적서 1건 조회가 쿼리 2회이므로 캐시가 사실상 필수다.
+- 캐시와 요청 병합으로 완화한다. `APIErrorCode.RateLimited` 발생 시 마지막 성공 캐시를 우선 제공(stale-while-error)하거나 오류 화면을 표시한다 [확인: SDK가 RateLimited 코드를 제공].
+- SDK 자동 재시도 [확인]: 기본 `maxRetries` 2, 초기 지연 1초, 최대 60초. 429/529는 모든 메서드, 500/503은 GET/DELETE만 재시도한다. `dataSources.query`는 POST이므로 500/503은 SDK가 재시도하지 않아 앱 레벨 재시도(최대 1회) 도입 여부를 구현 시 결정한다 `[가정]`.
+- 토큰 형식 사전 검증: Notion 호출 전에 토큰이 UUID 형식인지 검사해 잘못된 요청이 Notion 호출·캐시 키 증가로 이어지지 않게 한다.
+- 견적서 1건 조회 = 견적서 data source 쿼리 1회 + 품목 data source 쿼리 1회(품목 100건 초과 시 페이지네이션으로 추가)로 제한한다.
 
 ---
 
@@ -164,6 +167,10 @@ flowchart TD
 ### 7.1 Notion 데이터베이스 스키마 제안
 
 두 개의 데이터베이스를 사용한다: **Invoices**(견적서), **InvoiceItems**(품목). 품목은 Relation으로 견적서에 연결한다.
+
+- Relation은 **양방향(Dual)** 으로 설정한다(Invoices.`Items` ↔ InvoiceItems.`Invoice`). 앱은 품목 DB의 `Invoice` 필터로 품목을 조회한다(9.4장 근거 참조).
+- Notion API 버전 `2025-09-03`부터 스키마는 data source에 속한다. 각 DB는 data source 1개만 두는 것으로 가정하며, 앱은 data source ID로 쿼리한다 [확인].
+- 속성명은 코드 상수(`lib/notion/schema.ts`)와 정확히 일치해야 한다. 이름 변경 시 조회가 실패한다.
 
 **Invoices**
 
@@ -334,6 +341,8 @@ lib/
     client.ts           # Notion Client 싱글턴 (서버 전용)
     invoices.ts         # getInvoiceByToken(token)
     mapper.ts           # Notion 응답 → Invoice 매핑 + 런타임 검증
+    schema.ts           # 속성명(또는 ID) 상수
+    errors.ts           # 도메인 에러(Notion 오류 본문 비노출)
     types.ts
   invoice/
     calculate.ts        # calculateTotals() — 웹/PDF 공용
@@ -360,21 +369,36 @@ config/site.ts
 ```
 # Notion Integration Token (서버 전용)
 NOTION_TOKEN=
-# 견적서 데이터베이스(또는 data source) ID
-NOTION_INVOICES_DB_ID=
-# 품목 데이터베이스(또는 data source) ID
-NOTION_ITEMS_DB_ID=
+# 견적서 data source ID (Notion URL의 database ID가 아님. 아래 설정 절차 참조)
+NOTION_INVOICES_DATA_SOURCE_ID=
+# 품목 data source ID
+NOTION_ITEMS_DATA_SOURCE_ID=
 # 사이트 공개 URL (OG/링크 생성용)
 NEXT_PUBLIC_SITE_URL=http://localhost:3000
 ```
 
 ### 9.4 Notion 조회 흐름
-1. `ShareToken == token` AND `Status == 발행` 필터로 Invoices 조회(`page_size: 1`).
+0. 토큰이 UUID 형식이 아니면 Notion 호출 없이 `null` → 404.
+1. `notion.dataSources.query`로 `ShareToken == token` AND `Status == 발행` 필터 조회(`page_size: 1`).
 2. 결과가 없으면 `null` → 404.
-3. 해당 견적서의 Items Relation 또는 Items DB의 `Invoice` 필터로 품목 조회 후 `Order` 오름차순 정렬.
-4. 매퍼에서 필수 속성 누락/타입 불일치를 검증하고, 실패 시 서버 로그에 기록하고 사용자에게는 일반 오류를 표시한다.
+3. **품목 data source를 `Invoice` relation 필터(견적서 페이지 ID 포함)로 조회**하고 `Order` 오름차순 정렬한다(`collectPaginatedAPI`로 페이지네이션). 견적서의 `Items` relation 값은 쓰지 않는다. 페이지 응답의 relation은 최대 25개만 반환되고 초과 시 `has_more: true`가 되어 품목이 누락될 수 있기 때문이다 [확인]. 견적서 조회 시 `Items` 속성은 `filter_properties`에서 제외한다.
+4. 매퍼에서 필수 속성 누락/타입 불일치를 검증하고, 실패 시 서버 로그에 기록하고 사용자에게는 일반 오류를 표시한다. 쿼리 결과는 full page 여부를 타입 가드로 좁힌 뒤 매핑한다.
+5. 전체 호출은 `unstable_cache`(60초, 태그 `invoice:{token}`)로 감싸 웹 뷰와 PDF가 같은 캐시를 쓴다 `[가정: Next 15 동작은 구현 시 검증]`.
 
-> SDK 버전에 따라 `databases.query` 대신 `dataSources.query`를 사용할 수 있다 [확인: 최신 SDK 문서에 `dataSources.query` 존재]. 설치 시점의 API 버전을 기준으로 구현한다.
+**SDK/API 사실 정리** [확인: context7, `@notionhq/client` 문서]
+- 기본 Notion API 버전은 `2025-09-03`이며 `notion.dataSources.query({ data_source_id, filter, sorts, start_cursor, page_size, filter_properties })`를 사용한다. 구버전 `databases.query`는 쓰지 않는다.
+- `data_source_id`는 Notion URL의 database ID와 다르다. `GET /v1/databases/{database_id}` 응답의 `data_sources[].id`로 얻는다(단일 소스 DB는 `data_sources[0].id`).
+
+**Notion 설정 절차 (공급자 가이드에 포함)** `[가정: UI 문구는 구현 시 재확인]`
+1. Notion에서 internal Integration을 만들고 Read content 권한만 부여한다.
+2. Invoices, InvoiceItems 두 DB 모두에 Integration을 연결(공유)한다. 공유하지 않으면 `object_not_found`가 발생한다.
+3. 각 DB의 database ID로 data source ID를 조회해 환경변수에 넣는다.
+
+**구현 시 검증할 항목** (설치 후 타입 체크/실호출로 확인)
+- `select.equals`, `relation.contains` 필터 연산자 이름
+- `filter_properties`가 속성 이름과 ID 중 무엇을 받는지(문서 상충). 안전하게는 속성 ID를 조회해 상수로 사용
+- 필터에 쓰는 속성이 `filter_properties`에 없어도 동작하는지
+- `page_size` 최대값, `isFullPage` 헬퍼 이름, `databases.retrieve`의 `data_sources` 반환 여부
 
 ---
 
@@ -449,7 +473,9 @@ NEXT_PUBLIC_SITE_URL=http://localhost:3000
 | R1 | 기술 | Notion API 레이트리밋/지연 | 페이지 오류·지연 | 60초 캐시, 조회 2회 제한, 레이트리밋 시 stale 캐시 제공 또는 오류 화면 |
 | R2 | 기술 | PDF 한글 폰트 깨짐/폰트 형식 미지원 | PDF 품질 저하 | TTF 사용, 조기(3주차 초반이 아닌 1주차 스파이크) 한글·특수문자 샘플 검증 |
 | R3 | 기술 | 서버리스 번들 크기/타임아웃(폰트 포함) | 배포 실패, PDF 지연 | 폰트 서브셋, Node 런타임 고정, `maxDuration` 설정, 품목 상한 50행 |
-| R4 | 기술 | Notion SDK/API 버전 변경(`databases` → `dataSources`) | 구현 재작업 | 설치 시점 문서를 Context7로 재확인, Notion 접근을 `lib/notion`에 격리 |
+| R4 | 기술 | Notion SDK/API 버전 변경(`databases` → `dataSources`), 속성명/ID 변경 | 구현 재작업, 조회 실패 | 설치 시점 문서를 Context7로 재확인, Notion 접근을 `lib/notion`에 격리, 속성명을 `schema.ts` 상수로 일원화 |
+| R10 | 기술 | 품목 relation 25개 한도(견적서 `Items` 값 사용 시) | 품목 누락 | 품목 DB를 `Invoice` 필터로 조회(9.4장) |
+| R11 | 기술 | `dataSources.query`(POST)의 500/503은 SDK 자동 재시도 대상 아님 | 일시 장애 시 오류 화면 | 앱 레벨 재시도 1회 검토, stale 캐시 활용 |
 | R5 | 기술 | 웹/PDF 레이아웃 이원화로 불일치 | 신뢰도 하락 | 계산·포맷 공용 함수, 수락 테스트 FR-008 |
 | R6 | 운영 | 링크 유출 | 금액/사업자 정보 노출 | 128비트 토큰, 상태 전환 즉시 차단, 공급자에게 주의사항 안내 |
 | R7 | 운영 | 공급자가 Notion 스키마를 임의 변경 | 조회/매핑 실패 | 매퍼 검증 + 명확한 서버 로그, Notion 템플릿 복제 안내 |
@@ -498,8 +524,8 @@ NEXT_PUBLIC_SITE_URL=http://localhost:3000
 
 | 패키지 | 용도 | 상태 |
 |--------|------|------|
-| `@notionhq/client` | Notion API 클라이언트 | 신규 도입 |
+| `@notionhq/client` | Notion API 클라이언트 (API 버전 `2025-09-03`, `dataSources.query`) | 신규 도입 |
 | `@react-pdf/renderer` | 서버 PDF 생성 | 신규 도입 |
-| `server-only` | 서버 전용 모듈 보호 | 신규 도입 `[가정]` |
+| `server-only` | Notion 접근 모듈의 클라이언트 번들 유입 차단 | 신규 도입 (확정) |
 | `zod` | Notion 응답 런타임 검증 | 신규 도입 (선택) `[가정]` |
 | shadcn `table`, `skeleton` | 품목표, 로딩 UI | 신규 추가 |
