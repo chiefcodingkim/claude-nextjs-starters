@@ -5,8 +5,7 @@ export function SiteFooter() {
   return (
     <footer className="border-t py-6 text-center text-sm text-muted-foreground">
       <p>
-        © {new Date().getFullYear()} {siteConfig.name}. Built with Next.js &
-        shadcn/ui.
+        © {new Date().getFullYear()} {siteConfig.name}. All rights reserved.
       </p>
     </footer>
   );

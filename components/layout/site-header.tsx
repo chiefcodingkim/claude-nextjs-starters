@@ -1,4 +1,4 @@
-import { Code2 } from "lucide-react";
+import { FileText } from "lucide-react";
 import Link from "next/link";
 
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -11,7 +11,7 @@ export function SiteHeader() {
       <div className="mx-auto flex h-14 w-full max-w-5xl items-center justify-between px-4">
         <div className="flex items-center gap-6">
           <Link href="/" className="flex items-center gap-2 font-semibold">
-            <Code2 className="size-5" />
+            <FileText className="size-5" />
             {siteConfig.name}
           </Link>
           <nav className="flex items-center gap-4 text-sm text-muted-foreground">
