@@ -2,9 +2,9 @@
 
 | 항목 | 내용 |
 |------|------|
-| 문서 버전 | v0.1 (초안) |
-| 작성일 | 2026-11-14 |
-| 상태 | 검토 대기 (`[가정]` 및 14장 열린 질문 확정 필요) |
+| 문서 버전 | v0.2 (14장 열린 질문 Q1~Q9 확정 반영) |
+| 작성일 | 2026-11-14 (최종 수정 2026-11-17) |
+| 상태 | Q1~Q9 확정 (Q8 임시). 남은 `[가정]`은 구현 중 검증, 14장 미확정 2건(A4, A6) 확인 필요 |
 | 대상 규모 | 개발자 1~2명, 2~3주 |
 
 > 표기 규칙: `[가정]`은 아직 확인/확정되지 않은 사항이다. 라이브러리 동작 중 Context7 문서로 확인한 것은 `[확인]`으로 표시한다.
@@ -132,7 +132,7 @@ flowchart TD
 ## 6. 비기능 요구사항
 
 ### 6.1 성능
-- 견적서 페이지: 8장의 지표(2.2) 준수. 품목 최대 50행을 MVP 상한으로 한다 `[가정]`.
+- 견적서 페이지: 2.2장의 지표 준수. 품목 최대 50행을 MVP 상한으로 한다 `[가정]`.
 - PDF Route Handler: Node 런타임, 응답 ≤ 5초(p95), 메모리 ≤ 512MB `[가정]`.
 
 ### 6.2 보안
@@ -183,9 +183,9 @@ flowchart TD
 | ValidUntil | Date | O | `2026-12-14` |
 | ClientName | Text | O | `주식회사 한빛` |
 | ClientContact | Text | X | `김한빛 / hanbit@example.com` |
-| SupplierName | Text | O | `민지 디자인` |
-| SupplierBizNo | Text | X | `123-45-67890` |
-| SupplierContact | Text | X | `010-1234-5678` |
+| SupplierName | Text | X (Q3: 비우면 기본값 사용) | `민지 디자인` |
+| SupplierBizNo | Text | X (비우면 기본값 사용) | `123-45-67890` |
+| SupplierContact | Text | X (비우면 기본값 사용) | `010-1234-5678` |
 | TaxRate | Number (%) | O (기본 10) | `10` |
 | Note | Text | X | `계약금 50% 선입금` |
 | Items | Relation → InvoiceItems | O | 품목 3건 |
@@ -242,6 +242,8 @@ export interface InvoiceTotals {
   total: number;
 }
 ```
+
+**공급자 정보 기본값 (Q3 확정)**: 공급자는 `config`/환경변수의 고정값(`SUPPLIER_NAME`, `SUPPLIER_BIZ_NO`, `SUPPLIER_CONTACT`, 9.3장)을 기본으로 사용한다. 견적서 행의 `Supplier*` 속성에 값이 있으면 그 값이 우선하며, 비어 있으면 기본값으로 채운다. 따라서 `Invoice.supplier`는 항상 존재하고, `SupplierName`은 Notion에서 필수가 아니다. 기본값에도 이름이 없으면(환경변수 미설정) 매퍼가 설정 오류로 처리한다.
 
 위 Notion 속성은 다음과 같이 매핑한다: `Number→number`, `ShareToken→shareToken`, `Status→status`, `IssueDate→issueDate`, `ValidUntil→validUntil`, `ClientName/ClientContact→client`, `SupplierName/SupplierBizNo/SupplierContact→supplier`, `TaxRate→taxRate`, `Note→note`, 품목의 `Name/Description/Quantity/UnitPrice/Order→name/description/quantity/unitPrice/order`.
 
@@ -373,6 +375,10 @@ NOTION_TOKEN=
 NOTION_INVOICES_DATA_SOURCE_ID=
 # 품목 data source ID
 NOTION_ITEMS_DATA_SOURCE_ID=
+# 공급자 기본값 (Q3: 견적서 행에 Supplier* 값이 없을 때 사용)
+SUPPLIER_NAME=
+SUPPLIER_BIZ_NO=
+SUPPLIER_CONTACT=
 # 사이트 공개 URL (OG/링크 생성용)
 NEXT_PUBLIC_SITE_URL=http://localhost:3000
 ```
@@ -440,10 +446,13 @@ NEXT_PUBLIC_SITE_URL=http://localhost:3000
 
 총 3주, 각 단위는 독립 검증 가능하다. 공수: S(≤0.5일) / M(1~2일) / L(3일+).
 
+> 위험 선행 원칙(R2, R3): 한글 PDF 폰트·서버리스 번들 검증은 3주차가 아니라 **1주차 스파이크**로 먼저 수행한다(작업 1-S). 3주차 작업 9는 스파이크 결과를 바탕으로 본 구현만 한다. 상세 Task 구성은 `docs/ROADMAP.md`의 Phase 0~5를 따른다.
+
 ### 1주차: 기반 + 데이터
 | # | 작업 | 공수 | 의존 | 검증 |
 |---|------|------|------|------|
 | 1 | Notion 통합/DB 2개 생성, 샘플 데이터, `.env.example` | S | — | 토큰으로 수동 조회 성공 |
+| 1-S | **스파이크**: 한글 폰트(TTF) PDF 샘플 생성 + Vercel 프리뷰 배포로 번들 크기·응답 시간 확인 (R2, R3) | M | — | 한글/특수문자(㈜, ₩) 정상 출력, 배포 성공 |
 | 2 | `lib/notion` (client, types, mapper, `getInvoiceByToken`) | M | 1 | 샘플 토큰으로 `Invoice` 객체 출력 |
 | 3 | `lib/invoice` (`calculateTotals`, 포맷) | S | — | 수동 케이스 5개 검증(FR-007) |
 | 4 | 캐싱(60초)/에러 변환(404/503) | M | 2 | 잘못된 토큰·가짜 토큰·네트워크 차단 시 기대 결과 |
@@ -459,7 +468,7 @@ NEXT_PUBLIC_SITE_URL=http://localhost:3000
 ### 3주차: PDF + 배포
 | # | 작업 | 공수 | 의존 | 검증 |
 |---|------|------|------|------|
-| 9 | 한글 폰트 포함, `InvoiceDocument` 구현 | M | 3 | FR-004 (한글/특수문자 샘플) |
+| 9 | `InvoiceDocument` 구현 (폰트는 1-S에서 검증 완료된 설정 사용) | M | 3, 1-S | FR-004 (한글/특수문자 샘플) |
 | 10 | `/pdf` Route Handler + 다운로드 버튼 | M | 9 | FR-003, FR-008 |
 | 11 | 배포(Vercel) + 환경변수 + 실기기 확인 | S | 전체 | MVP 완료 기준 전부 |
 | 12 | 만료 배지(P1), 문서화(README: Notion 템플릿 사용법) | S | 6 | FR-012 |
@@ -486,15 +495,19 @@ NEXT_PUBLIC_SITE_URL=http://localhost:3000
 
 ## 14. 열린 질문
 
-1. **링크 방식**: 별도 `ShareToken`(권장, 본 문서 가정) vs Notion 페이지 ID 직접 사용? 
-2. **배포 플랫폼**: Vercel로 가정. 다른 플랫폼이면 PDF 런타임/폰트 전략 재검토 필요.
-3. **공급자 정보 위치**: 견적서 행마다 입력(본 문서 가정) vs `config`/환경변수 고정값? 공급자가 1인이면 고정값이 입력 부담이 적다.
-4. **토큰 생성**: Notion에서 수동 입력 vs Notion 자동화/수식으로 생성? 수동 입력 시 가이드 필요.
-5. **테스트 전략**: 테스트 프레임워크 미설정. `calculateTotals`/`mapper` 단위 테스트(Vitest) 도입 여부, Playwright MCP를 활용한 수동 E2E 확인으로 충분한지?
-6. **부가세/통화**: 부가세율 기본 10%, 원 미만 절사, KRW 단일 통화 가정이 맞는가?
-7. **조회 갱신 지연**: 최대 60초 지연이 허용 가능한가(즉시 반영이 필요하면 웹훅/수동 재검증 필요)?
-8. **브랜딩**: 서비스명, 로고, PDF 푸터 문구는? (현재 `config/site.ts`는 스타터 값)
-9. **폰트**: Noto Sans KR vs Pretendard 선호, 폰트 파일 용량 허용 범위?
+Q1~Q9는 2026-11-17에 확정되었다.
+
+1. **링크 방식** — **확정**: 별도 `ShareToken`(UUID v4). Notion 페이지 ID는 URL에 쓰지 않는다.
+2. **배포 플랫폼** — **확정**: Vercel. 프리뷰 배포로 폰트 포함·함수 크기·응답 시간을 실측 검증한다.
+3. **공급자 정보 위치** — **확정**: `config`/환경변수 고정값을 기본으로 하고, 견적서 행의 `Supplier*` 속성은 선택 입력(있으면 우선). 7.1장 스키마와 7.2장 타입에 반영.
+4. **토큰 생성** — **확정**: Notion에서 수동 입력하고 README에 생성 가이드를 제공한다. 자동화는 Post-MVP.
+5. **테스트 전략** — **확정**: Vitest로 `calculateTotals`/`mapper`/UUID 검증 단위 테스트를 도입하고, E2E는 Playwright MCP 수동 확인으로 한다.
+6. **부가세/통화** — **확정**: 부가세율 기본 10%, 원 미만 절사, KRW 단일 통화. 세무 기준은 운영 전 재확인한다.
+7. **조회 갱신 지연** — **확정**: 최대 60초 허용. 즉시 반영(웹훅/수동 재검증)은 Post-MVP.
+8. **브랜딩** — **임시 확정**: 현재 임시값("견적서 뷰어")으로 진행하고, 서비스명·로고·PDF 푸터 문구는 추후 `config/site.ts`에서 교체한다.
+9. **폰트** — **확정**: Noto Sans KR TTF 정적 Regular/Bold. 폰트 스파이크에서 문제가 있으면 Pretendard로 교체한다.
+
+**미확정**: 만료 견적서의 PDF에도 만료 표시를 넣을지(ROADMAP A6), 접근 로그를 토큰 해시 앞 8자·시각·결과코드만 남길지(ROADMAP A4, 11장 `[가정]`).
 
 ---
 
